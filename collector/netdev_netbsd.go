@@ -12,20 +12,18 @@
 // limitations under the License.
 
 // +build !nonetdev
-// +build netbsd
 
 package collector
 
 import (
 	"errors"
 	"regexp"
-	"strconv"
 
-	"github.com/prometheus/common/log"
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 )
 
 /*
-#include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <ifaddrs.h>
@@ -33,8 +31,8 @@ import (
 */
 import "C"
 
-func getNetDevStats(ignore *regexp.Regexp) (map[string]map[string]string, error) {
-	netDev := map[string]map[string]string{}
+func getNetDevStats(ignore *regexp.Regexp, accept *regexp.Regexp, logger log.Logger) (netDevStats, error) {
+	netDev := netDevStats{}
 
 	var ifap, ifa *C.struct_ifaddrs
 	if C.getifaddrs(&ifap) == -1 {
@@ -43,33 +41,34 @@ func getNetDevStats(ignore *regexp.Regexp) (map[string]map[string]string, error)
 	defer C.freeifaddrs(ifap)
 
 	for ifa = ifap; ifa != nil; ifa = ifa.ifa_next {
-		if ifa.ifa_addr.sa_family == C.AF_LINK {
-			dev := C.GoString(ifa.ifa_name)
-			if ignore.MatchString(dev) {
-				log.Debugf("Ignoring device: %s", dev)
-				continue
-			}
+		if ifa.ifa_addr.sa_family != C.AF_LINK {
+			continue
+		}
 
-			devStats := map[string]string{}
-			data := (*C.struct_if_data)(ifa.ifa_data)
+		dev := C.GoString(ifa.ifa_name)
+		if ignore != nil && ignore.MatchString(dev) {
+			level.Debug(logger).Log("msg", "Ignoring device", "device", dev)
+			continue
+		}
+		if accept != nil && !accept.MatchString(dev) {
+			level.Debug(logger).Log("msg", "Ignoring device", "device", dev)
+			continue
+		}
 
-			devStats["receive_packets"] = convertNetBSDCPUTime(uint64(data.ifi_ipackets))
-			devStats["transmit_packets"] = convertNetBSDCPUTime(uint64(data.ifi_opackets))
-			devStats["receive_errs"] = convertNetBSDCPUTime(uint64(data.ifi_ierrors))
-			devStats["transmit_errs"] = convertNetBSDCPUTime(uint64(data.ifi_oerrors))
-			devStats["receive_bytes"] = convertNetBSDCPUTime(uint64(data.ifi_ibytes))
-			devStats["transmit_bytes"] = convertNetBSDCPUTime(uint64(data.ifi_obytes))
-			devStats["receive_multicast"] = convertNetBSDCPUTime(uint64(data.ifi_imcasts))
-			devStats["transmit_multicast"] = convertNetBSDCPUTime(uint64(data.ifi_omcasts))
-			devStats["receive_drop"] = convertNetBSDCPUTime(uint64(data.ifi_iqdrops))
+		data := (*C.struct_if_data)(ifa.ifa_data)
 
-			netDev[dev] = devStats
+		netDev[dev] = map[string]uint64{
+			"receive_packets":    uint64(data.ifi_ipackets),
+			"transmit_packets":   uint64(data.ifi_opackets),
+			"receive_errs":       uint64(data.ifi_ierrors),
+			"transmit_errs":      uint64(data.ifi_oerrors),
+			"receive_bytes":      uint64(data.ifi_ibytes),
+			"transmit_bytes":     uint64(data.ifi_obytes),
+			"receive_multicast":  uint64(data.ifi_imcasts),
+			"transmit_multicast": uint64(data.ifi_omcasts),
+			"receive_drop":       uint64(data.ifi_iqdrops),
 		}
 	}
 
 	return netDev, nil
-}
-
-func convertNetBSDCPUTime(counter uint64) string {
-	return strconv.FormatUint(counter, 10)
 }

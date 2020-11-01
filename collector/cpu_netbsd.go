@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"unsafe"
 
+	"github.com/go-kit/kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sys/unix"
 )
@@ -38,7 +39,7 @@ func init() {
 	registerCollector("cpu", defaultEnabled, NewCPUCollector)
 }
 
-func NewCPUCollector() (Collector, error) {
+func NewCPUCollector(logger log.Logger) (Collector, error) {
 	return &cpuCollector{
 		cpu: typedDesc{nodeCPUSecondsDesc, prometheus.CounterValue},
 	}, nil
